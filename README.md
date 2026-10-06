@@ -21,12 +21,14 @@ The platform enforces a strict separation between the **Platform Core** (which k
    ┌────────────────────────────────────────────────────────────────────────┐
    │                           STAGE 1: INGEST                              │
    │  drive.py / windsor.py  │  SHA-256 Hashing  │  raw_files deduplication │
+   │  Lookback revision windows (Meta 28d, GAds 14d, LinkedIn 14d, GSC 3d)  │
    └───────────────────────────────────┬────────────────────────────────────┘
                                        │
                                        ▼
    ┌────────────────────────────────────────────────────────────────────────┐
    │                          STAGE 2: NORMALIZE                            │
-   │  Adapters (gsc_csv, etc.) ──> Canonical Schemas (search_v1, paid_v2)   │
+   │  Adapters (gsc_csv, meta_ads, organic_social)                          │
+   │  Canonical Schemas (search_v1, paid_v2, organic_v1, web_v1, etc.)      │
    │  Composite Key Upserts  ──> Unplaceable rows flagged for review        │
    └───────────────────────────────────┬────────────────────────────────────┘
                                        │
@@ -49,7 +51,8 @@ The platform enforces a strict separation between the **Platform Core** (which k
    ┌────────────────────────────────────────────────────────────────────────┐
    │                         STAGE 5: GENERATE                              │
    │  Report Generators (openpyxl / python-pptx) reading canonical rows.    │
-   │  Data Quality Checks (CTR <= 100%, vs medians) & Brand Styling.        │
+   │  Data Quality Checks & Brand Styling (Ampere: #1C2321, #4E8C2B, Arial) │
+   │  Enforces ratio-of-sums (sum of engagements / sum of impressions)      │
    └───────────────────────────────────┬────────────────────────────────────┘
                                        │
                                        ▼
@@ -67,144 +70,90 @@ The platform enforces a strict separation between the **Platform Core** (which k
 | Phase | Focus | Status | Exit Test Criteria |
 | :--- | :--- | :---: | :--- |
 | **Phase 0** | **Foundations** | **Completed** | `howl validate --brand ampere` passes; all 14 tables verified in database. |
-| **Phase 1** | **First Report End-to-End** | **Completed** | One command turns GSC CSV into an Ampere Excel report. Re-running produces zero new review items and an identical output file. |
-| **Phase 2** | **Live Data & Second Report** | *Next* | Windsor API puller, paid social & engagement rate reports with zero core changes. |
-| **Phase 3** | **Shared Review Services** | *Planned* | Two-way Google Sheet review queue sync and automatic promotion to manifest rules. |
+| **Phase 1** | **First Report End-to-End (GSC)** | **Completed** | One command turns GSC CSV into an Ampere Excel report. Re-running produces zero new review items and an identical output file. |
+| **Phase 2** | **Live Data & Multi-Channel Reports** | **Completed** | Windsor API puller, Meta Ads adapter, Organic Social adapter, and 2 new deliverables (`paid_social_report` and `engagement_rate_report`) shipped with zero core architecture changes. |
+| **Phase 3** | **Shared Review Services** | *Next* | Two-way Google Sheet review queue sync, bulk resolution actions, and promotion to manifest rules. |
 | **Phase 4** | **Orchestration & Delivery** | *Planned* | Scheduled execution, Gmail drafts, Slack reviewer DMs, and error alerts. |
 | **Phase 5** | **Self-Serve & Media Plans** | *Planned* | Control Sheet execution buttons and media plan naming convention enforcement. |
 
 ---
 
-## 3. Repository Structure
+## 3. Implemented Deliverable Reports
 
-```
-dataingestion/
-├── howlplatform/
-│   ├── platform/                       # Core platform layer (no report logic)
-│   │   ├── manifest/                   # JSON Schema, loader, semantic validator
-│   │   │   ├── manifest.schema.json
-│   │   │   └── loader.py
-│   │   ├── store/                      # Database engine & SQL migrations
-│   │   │   ├── migrations/
-│   │   │   │   └── 001_initial_schema.sql
-│   │   │   ├── db.py                   # SQLAlchemy (PostgreSQL / SQLite fallback)
-│   │   │   └── sync.py                 # Manifest-to-database synchronization
-│   │   ├── canonical/                  # Canonical schema dataclasses & keys
-│   │   │   └── schemas.py              # search_v1, paid_v2, organic_v1, web_v1, crm_v1, plan_v1
-│   │   ├── ingest/                     # File ingestion & SHA-256 deduplication
-│   │   │   └── drive.py
-│   │   ├── adapters/                   # Raw-to-canonical adapters
-│   │   │   └── gsc_csv.py              # GSC CSV adapter with composite upserts
-│   │   ├── classifier/                 # 3-tier classification engine
-│   │   │   └── classifier.py           # Ledger -> Manifest Rules -> AI/Review
-│   │   ├── ledger/                     # Append-only permanent decision ledger
-│   │   │   └── ledger.py
-│   │   ├── review/                     # Impact-scored review queue & gate check
-│   │   │   └── queue.py
-│   │   ├── orchestrator/               # Pipeline execution state machine
-│   │   │   └── pipeline.py
-│   │   └── delivery/                   # File delivery and output lineage
-│   │       └── drive.py
-│   └── deliverables/                   # Deliverable report layer (generators)
-│       ├── contract.py                 # GeneratorSpec, Requirement, Registry
-│       ├── gsc_organic_report/         # GSC Organic Search Report (xlsx)
-│       │   └── generator.py
-│       ├── paid_social_report/         # Paid Social Report generator
-│       │   └── generator.py
-│       └── engagement_rate_report/     # Multi-channel Engagement Rate generator
-│           └── generator.py
-├── manifests/
-│   └── ampere.json                     # Validated Ampere Brand Manifest
-├── outputs/                            # Delivered client-ready reports
-│   └── Ampere/
-│       └── gsc_organic_report/
-│           └── 2026-08/
-│               └── ampere_organic_search_report_2026-08.xlsx
-├── tests/
-│   ├── fixtures/                       # Real test source files (gsc_ampere_2026_08.csv)
-│   ├── golden/                         # Expected golden deliverables for regression
-│   ├── test_manifest.py
-│   ├── test_store.py
-│   ├── test_canonical.py
-│   ├── test_generator_contract.py
-│   ├── test_ingest.py
-│   ├── test_classifier.py
-│   ├── test_adapter_gsc.py
-│   ├── test_review_queue.py
-│   ├── test_golden.py
-│   ├── test_pipeline_e2e.py
-│   └── test_cli.py
-├── cli.py                              # Unified CLI interface (`howl`)
-├── pyproject.toml                      # Project metadata and dependencies
-└── README.md
-```
+### Deliverable 1: Organic Search Performance (`gsc_organic_report`)
+- **Input Domain**: `search` (`search_v1`)
+- **Format**: Multi-tab Excel (`.xlsx`)
+- **Worksheets**:
+  1. `Summary`: Overall KPIs (Queries, Impressions, Clicks, CTR, Position) and Branded vs. Non-Branded breakdown.
+  2. `Product Breakdown`: Volume and click share by vehicle product (*Magnus G Max*, *Reo Vyb*, *Nexus*, *Magnus Neo*).
+  3. `Top Queries`: Detailed query performance with classification tags and audit source (`rule`, `ledger`, `ai`).
+  4. `Notes`: Methodology, formula definitions, and audit lineage.
+
+### Deliverable 2: Paid Social Performance (`paid_social_report`)
+- **Input Domain**: `paid` (`paid_v2`)
+- **Format**: Multi-tab Excel (`.xlsx`)
+- **Worksheets**:
+  1. `Summary`: Spend (INR), Impressions, Reach, Clicks, Engagements, Conversions, CTR, CPC, CPM.
+  2. Campaign Breakdown: Performance by campaign and ad set.
+  3. `Notes`: Revision lookback windows (28 days) and currency audit.
+
+### Deliverable 3: Multi-Channel Engagement Rate Report (`engagement_rate_report`)
+- **Input Domains**: `paid` (`paid_v2`) and `organic` (`organic_v1`)
+- **Format**: Multi-tab Excel (`.xlsx`)
+- **Key Fixes & Innovations (Document 06)**:
+  - **Ratio of Sums**: Computes $\frac{\sum \text{engagements}}{\sum \text{impressions}}$ across platforms (YouTube denominator: video views). Avoids erroneous legacy averaging of monthly percentages.
+  - **Three Canonical Tables**: Paid, Organic, and Total Combined engagement rates across Instagram, Facebook, YouTube, and LinkedIn.
+  - **Combined Total Rule**: Combined engagement rate strictly falls between Paid and Organic rates.
+  - **Methodology Tab**: Audit documentation of formulas and correction rationale.
 
 ---
 
 ## 4. CLI Usage Guide
 
-The unified CLI provides commands for validation, migrations, running report pipelines, and resolving review items.
-
-### 1. Validate Brand Setup
-Validates manifest schema, deliverable registries, canonical mapping, and database tables:
 ```bash
+# 1. Validate Brand Setup & Database Readiness
 python cli.py validate --brand ampere
-```
 
-### 2. Run Database Migrations
-Applies SQL migrations creating all 14 required platform and canonical tables:
-```bash
+# 2. Run Database Migrations
 python cli.py migrate
-```
 
-### 3. Run Report Pipeline (End-to-End)
-Runs the complete 7-stage pipeline for a brand, deliverable, and period:
-```bash
-python cli.py run --brand ampere --deliverable gsc_organic_report --period 2026-08 --input tests/fixtures/gsc_ampere_2026_08.csv
-```
+# 3. Generate Deliverable 1: Organic Search Report
+python cli.py run --brand ampere --deliverable gsc_organic_report --period 2026-08
 
-### 4. Review Queue Operations
-List open review items ranked by impact (e.g. clicks):
-```bash
+# 4. Generate Deliverable 2: Paid Social Report
+python cli.py run --brand ampere --deliverable paid_social_report --period 2026-08
+
+# 5. Generate Deliverable 3: Engagement Rate Report
+python cli.py run --brand ampere --deliverable engagement_rate_report --period 2026-08
+
+# 6. Inspect Open Review Queue Items
 python cli.py review-list --brand ampere
-```
 
-Resolve an open review item and commit the decision to the decision ledger:
-```bash
+# 7. Resolve Review Item & Record into Permanent Decision Ledger
 python cli.py review-resolve \
   --item-id <ITEM-UUID> \
   --action reclassify \
   --val generic_theme=dealership \
-  --reason "Near me search signifies dealership intent"
+  --reason "Dealership intent"
 ```
-*Note: Any item resolved in the ledger is immediately and permanently remembered on future runs.*
 
 ---
 
-## 5. Report Deliverable: GSC Organic Search (`.xlsx`)
+## 5. Automated Tests
 
-The generated workbook for Ampere includes 4 custom-styled worksheets adhering to the brand palette (`#1C2321`, `#4E8C2B`, Arial):
-1. **Summary**: Overall KPIs (Total Queries, Impressions, Clicks, Overall CTR, Avg Position) and Branded vs. Non-Branded performance breakdown.
-2. **Product Breakdown**: Volume, clicks, CTR, and click share grouped by product roster (e.g., *Magnus G Max*, *Reo Vyb*, *Nexus*, *Magnus Neo*).
-3. **Top Queries**: Query-level detail with rank, metrics, branded flag, product attribution, theme, and classification lineage source (`rule`, `ledger`, `ai`).
-4. **Notes**: Methodological notes, calculation lineage, generator version, and audit metadata.
-
----
-
-## 6. Running Tests
-
-The test suite runs with `pytest` and validates every component without external credentials:
+Run the full pytest suite:
 ```bash
 python -m pytest -v
 ```
 
-**Test Coverage Summary (27 passing tests)**:
-- Manifest syntax and semantic validation.
-- Database schema migration, table verification, and manifest synchronization.
-- Canonical schema definitions and composite deduplication keys.
-- Generator contract requirements and dynamic auto-registration.
-- File hashing and SHA-256 deduplication.
-- 3-tier classification hierarchy, sensitive word context matching, and ledger overrides.
-- GSC CSV parsing, validation, and database upsert idempotency.
-- Review queue impact scoring, gate evaluation, and resolution recording.
-- End-to-end pipeline execution and golden file structure verification.
+**Coverage Summary (35 passing tests)**:
+- Manifest schema and semantic validations.
+- Database migrations, table inspection, and manifest-to-store syncing.
+- Canonical schemas (`search_v1`, `paid_v2`, `organic_v1`, `web_v1`, `crm_v1`, `plan_v1`) and unique key deduplication.
+- Windsor API puller with per-channel lookback revision windows (Meta 28d, Google Ads 14d, GSC 3d).
+- Legacy sheet importer, percentage parsing, and problem cell flagging.
+- GSC CSV, Meta Ads, and Organic Social adapters.
+- 3-tier classification hierarchy, real-word context matching (`amber`/`empire`), and ledger lookup overrides.
+- Review queue gate checks ($\le 2\%$ threshold) and decision ledger append-only persistence.
+- Report generators for all 3 deliverables (`gsc_organic_report`, `paid_social_report`, `engagement_rate_report`).
+- Golden deliverable file regression test and end-to-end pipeline execution.

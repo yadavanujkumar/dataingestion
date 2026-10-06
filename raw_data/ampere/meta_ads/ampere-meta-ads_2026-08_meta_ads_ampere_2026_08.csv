@@ -1,0 +1,7 @@
+date,campaign,adset,ad,spend,currency,impressions,reach,clicks,post_engagements,video_views,conversions,revenue,utm_source,utm_medium,utm_campaign,is_boosted_post
+2026-08-01,Ampere_Magnus_G_Max_Launch,Bangalore_EV_Buyers,Magnus_Video_Ad1,12500.0,INR,184220,91400,3420,30304,45100,24,0,meta,paid_social,magnus_launch,false
+2026-08-02,Ampere_Magnus_G_Max_Launch,Bangalore_EV_Buyers,Magnus_Video_Ad1,14200.0,INR,198500,98200,3810,32410,48200,28,0,meta,paid_social,magnus_launch,false
+2026-08-03,Ampere_Reo_Vyb_College,Tier2_Students,Reo_Carousel_Ad2,8500.0,INR,142000,72100,2100,18900,12000,15,0,meta,paid_social,reo_vyb_fest,false
+2026-08-04,Ampere_Nexus_Premium,Tech_Professionals,Nexus_Static_Ad3,18000.0,INR,210000,105000,4120,35800,52000,35,0,meta,paid_social,nexus_flagship,false
+2026-08-05,Ampere_Zeal_Independence_Day,General_City,Zeal_Offer_Ad1,6200.0,INR,85000,44000,1450,11200,8500,10,0,meta,paid_social,zeal_aug_offer,false
+2026-08-10,Ampere_Community_Post_Boost,Existing_Followers,Post_12948_Boost,2500.0,INR,35000,19200,680,5400,0,3,0,meta,paid_social,post_boost,true
