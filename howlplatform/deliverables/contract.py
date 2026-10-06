@@ -4,6 +4,7 @@ Matches HOWL Document 04 Section 5.
 """
 from __future__ import annotations
 
+import importlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type
@@ -76,80 +77,23 @@ def register_generator(cls: Type[Generator]) -> Type[Generator]:
 
 
 def get_generator(name: str) -> Optional[Type[Generator]]:
-    """Retrieve a generator class by deliverable name."""
+    """Retrieve a generator class by deliverable name, auto-loading if needed."""
+    if name not in _REGISTRY:
+        # Try dynamic import from known package
+        try:
+            importlib.import_module(f"howlplatform.deliverables.{name}.generator")
+        except (ModuleNotFoundError, ImportError):
+            pass
     return _REGISTRY.get(name)
 
 
 def list_generators() -> List[str]:
     """List all registered deliverable generator names."""
+    # Ensure known generators are loaded
+    for gen_name in ["gsc_organic_report", "paid_social_report", "engagement_rate_report"]:
+        if gen_name not in _REGISTRY:
+            try:
+                importlib.import_module(f"howlplatform.deliverables.{gen_name}.generator")
+            except (ModuleNotFoundError, ImportError):
+                pass
     return sorted(list(_REGISTRY.keys()))
-
-
-# Built-in deliverable generator declarations (stubs for Phase 0, implemented in Phase 1 & 2)
-
-@register_generator
-class GSCOrganicReportGenerator(Generator):
-    spec = GeneratorSpec(
-        name="gsc_organic_report",
-        version="1.0.0",
-        requires=(
-            Requirement(
-                domain="search",
-                min_version="search_v1",
-                columns=("impressions", "clicks", "ctr", "position", "is_branded", "product")
-            ),
-        ),
-        outputs=("xlsx",),
-        blocking_checks=("ctr_over_100", "zero_clicks_with_high_impressions"),
-        uses_narrative=False,
-    )
-
-    def build(self, brand: dict, period: str, data: dict, out_dir: str) -> List[str]:
-        return []
-
-
-@register_generator
-class PaidSocialReportGenerator(Generator):
-    spec = GeneratorSpec(
-        name="paid_social_report",
-        version="1.0.0",
-        requires=(
-            Requirement(
-                domain="paid",
-                min_version="paid_v2",
-                columns=("spend", "impressions", "reach", "clicks", "engagements", "conversions")
-            ),
-        ),
-        outputs=("xlsx",),
-        blocking_checks=("rate_over_100", "vs_platform_totals"),
-        uses_narrative=False,
-    )
-
-    def build(self, brand: dict, period: str, data: dict, out_dir: str) -> List[str]:
-        return []
-
-
-@register_generator
-class EngagementRateReportGenerator(Generator):
-    spec = GeneratorSpec(
-        name="engagement_rate_report",
-        version="1.0.0",
-        requires=(
-            Requirement(
-                domain="paid",
-                min_version="paid_v2",
-                columns=("impressions", "engagements")
-            ),
-            Requirement(
-                domain="organic",
-                min_version="organic_v1",
-                columns=("impressions", "engagements")
-            ),
-        ),
-        outputs=("xlsx",),
-        blocking_checks=("rate_over_100", "vs_platform_totals"),
-        uses_narrative=False,
-    )
-
-    def build(self, brand: dict, period: str, data: dict, out_dir: str) -> List[str]:
-        return []

@@ -4,17 +4,19 @@ HOWL Platform CLI (`howl`)
 Commands:
   howl validate --brand <brand_id>
   howl migrate
-  howl run --brand <brand_id> --deliverable <deliverable> --period <YYYY-MM>
-  howl review-sync --brand <brand_id>
+  howl run --brand <brand_id> --deliverable <deliverable> --period <YYYY-MM> [--input <file_path>]
+  howl review-list --brand <brand_id>
+  howl review-resolve --brand <brand_id> --item-id <id> --action <action> --val <key=val>
 """
+from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
 from typing import Optional
 
-# Ensure howlplatform is in path
 CURRENT_DIR = Path(__file__).parent.resolve()
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
@@ -29,6 +31,8 @@ from howlplatform.platform.store.db import (
     REQUIRED_TABLES,
 )
 from howlplatform.platform.store.sync import sync_brand_manifest
+from howlplatform.platform.orchestrator.pipeline import PipelineRun
+from howlplatform.platform.review.queue import get_open_review_items, resolve_review_item
 from howlplatform.deliverables.contract import list_generators, get_generator
 
 
@@ -38,8 +42,7 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     print("HOWL Platform - Database Migration")
     print("=" * 60)
     engine = get_engine()
-    db_type = engine.dialect.name
-    print(f"Target Database Engine: {db_type.upper()}")
+    print(f"Target Database Engine: {engine.dialect.name.upper()}")
 
     try:
         applied = run_migrations(engine)
@@ -48,7 +51,6 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         else:
             print("No new migrations to apply.")
 
-        # Check required tables
         table_status = check_tables_exist(engine)
         missing = [tbl for tbl, exists in table_status.items() if not exists]
         if missing:
@@ -89,25 +91,20 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     # 3. Validate deliverables against Generator Registry
     declared_deliverables = manifest.get("deliverables", [])
-    registered = list_generators()
-    missing_gens = []
-    for d in declared_deliverables:
-        if get_generator(d) is None:
-            missing_gens.append(d)
+    missing_gens = [d for d in declared_deliverables if get_generator(d) is None]
 
     if missing_gens:
         print(f"[FAIL] Unregistered deliverable generators: {', '.join(missing_gens)}")
-        print(f"       Registered generators: {', '.join(registered)}")
+        print(f"       Registered generators: {', '.join(list_generators())}")
         return 1
     print(f"[PASS] Deliverable generators verified: {', '.join(declared_deliverables)}")
 
     # 4. Validate sources against Canonical Schema registry
     sources = manifest.get("sources", [])
-    invalid_schemas = []
-    for s in sources:
-        schema_ref = s.get("schema_ref")
-        if schema_ref not in CANONICAL_SCHEMA_MAP:
-            invalid_schemas.append(f"{s.get('source_id')}: {schema_ref}")
+    invalid_schemas = [
+        f"{s.get('source_id')}: {s.get('schema_ref')}"
+        for s in sources if s.get("schema_ref") not in CANONICAL_SCHEMA_MAP
+    ]
 
     if invalid_schemas:
         print(f"[FAIL] Unknown schema_ref in sources: {', '.join(invalid_schemas)}")
@@ -130,7 +127,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
             return 1
         print(f"[PASS] Database verified ({len(REQUIRED_TABLES)} required tables present)")
 
-        # Sync manifest to database
         sync_brand_manifest(manifest, engine)
         print(f"[PASS] Manifest synchronized into 'brands' and 'sources' tables")
     except Exception as e:
@@ -144,21 +140,109 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    """Trigger a report run (stubbed state machine for Phase 0)."""
+    """Run end-to-end reporting pipeline."""
     brand_id = args.brand
     deliverable = args.deliverable
     period = args.period
-    print(f"Initiating run for brand='{brand_id}', deliverable='{deliverable}', period='{period}'...")
-    print("Status: pending -> ingesting")
-    print(f"[INFO] Run registered for {brand_id} - {deliverable} ({period}). (Stage: Phase 0 foundation ready).")
+    input_file = getattr(args, "input", None)
+
+    print("=" * 60)
+    print(f"HOWL Pipeline Run: {brand_id} | {deliverable} | {period}")
+    print("=" * 60)
+
+    try:
+        pipeline = PipelineRun(
+            brand_id=brand_id,
+            deliverable=deliverable,
+            period=period,
+            input_file=input_file,
+        )
+        result = pipeline.execute()
+
+        print(f"Run ID: {result['run_id']}")
+        print(f"Final Status: {result['status'].upper()}")
+
+        if result['status'] == "awaiting_review":
+            print("\n[WARNING] RUN PAUSED AT REVIEW GATE")
+            print(result['message'])
+            print(f"Open review items: {result['gate_status']['items_count']}")
+            print("Use 'python cli.py review-list --brand " + brand_id + "' to review and resolve items.")
+            return 2
+
+        if result['status'] == "delivered":
+            print(f"\n[SUCCESS] Deliverable generated and delivered:")
+            for d in result.get('delivered_files', []):
+                print(f"  - File: {d['file_name']}")
+                print(f"    Location: {d['delivered_to']}")
+            return 0
+
+        return 0
+    except Exception as e:
+        print(f"\n[FAIL] Pipeline run failed: {e}")
+        return 1
+
+
+def cmd_review_list(args: argparse.Namespace) -> int:
+    """List open review items for a brand ranked by impact."""
+    brand_id = args.brand
+    engine = get_engine()
+    items = get_open_review_items(brand_id, engine)
+
+    print("=" * 70)
+    print(f"HOWL Review Queue: Brand '{brand_id}' ({len(items)} open items)")
+    print("=" * 70)
+
+    if not items:
+        print("No open review items found. Everything is resolved!")
+        return 0
+
+    print(f"{'Item ID':<38} {'Impact':<8} {'Entity Key':<25} {'Reason'}")
+    print("-" * 70)
+    for it in items:
+        print(f"{it['item_id']:<38} {it['impact']:<8.1f} {it['entity_key'][:23]:<25} {it['reason']}")
     return 0
+
+
+def cmd_review_resolve(args: argparse.Namespace) -> int:
+    """Resolve an open review item and write decision to the ledger."""
+    item_id = args.item_id
+    action = args.action
+    val_str = args.val or "{}"
+    decided_by = getattr(args, "by", "analyst@howl.internal")
+    reason = getattr(args, "reason", "Analyst review")
+
+    try:
+        if "=" in val_str and not val_str.startswith("{"):
+            k, v = val_str.split("=", 1)
+            v_clean = True if v.lower() == "true" else (False if v.lower() == "false" else v)
+            val = {k: v_clean}
+        else:
+            val = json.loads(val_str)
+    except Exception as e:
+        print(f"Invalid value JSON or format: {e}")
+        return 1
+
+    engine = get_engine()
+    decision_id = resolve_review_item(
+        item_id=item_id,
+        action=action,
+        value=val,
+        decided_by=decided_by,
+        reason=reason,
+        engine=engine,
+    )
+
+    if decision_id:
+        print(f"[SUCCESS] Item {item_id} resolved! Recorded decision_id: {decision_id}")
+        return 0
+    else:
+        print(f"[FAIL] Review item {item_id} not found.")
+        return 1
 
 
 def cmd_review_sync(args: argparse.Namespace) -> int:
-    """Sync review queue with Google Sheet (Phase 1/3 feature)."""
-    brand_id = args.brand
-    print(f"[INFO] Review sync triggered for brand='{brand_id}'.")
-    return 0
+    """Alias for syncing/listing review queue."""
+    return cmd_review_list(args)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -173,17 +257,30 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--brand", required=True, help="Brand ID (e.g. ampere)")
 
     # migrate
-    migrate_parser = subparsers.add_parser("migrate", help="Run database migrations")
+    subparsers.add_parser("migrate", help="Run database migrations")
 
     # run
     run_parser = subparsers.add_parser("run", help="Run a report pipeline")
     run_parser.add_argument("--brand", required=True, help="Brand ID")
     run_parser.add_argument("--deliverable", required=True, help="Deliverable name (e.g. gsc_organic_report)")
     run_parser.add_argument("--period", required=True, help="Period (e.g. 2026-08)")
+    run_parser.add_argument("--input", required=False, help="Path to input source file")
+
+    # review-list
+    review_list_parser = subparsers.add_parser("review-list", help="List open review items")
+    review_list_parser.add_argument("--brand", required=True, help="Brand ID")
 
     # review-sync
-    review_parser = subparsers.add_parser("review-sync", help="Synchronize review queue")
-    review_parser.add_argument("--brand", required=True, help="Brand ID")
+    review_sync_parser = subparsers.add_parser("review-sync", help="Synchronize and list review queue")
+    review_sync_parser.add_argument("--brand", required=True, help="Brand ID")
+
+    # review-resolve
+    resolve_parser = subparsers.add_parser("review-resolve", help="Resolve a review item")
+    resolve_parser.add_argument("--item-id", required=True, help="Review item ID")
+    resolve_parser.add_argument("--action", required=True, choices=["reclassify", "fix", "exclude", "ignore"])
+    resolve_parser.add_argument("--val", default="{}", help="Decision value JSON or key=value")
+    resolve_parser.add_argument("--by", default="analyst@howl.internal", help="Reviewer identity")
+    resolve_parser.add_argument("--reason", default="", help="Reason for decision")
 
     return parser
 
@@ -202,8 +299,12 @@ def main() -> int:
         return cmd_migrate(args)
     elif args.command == "run":
         return cmd_run(args)
+    elif args.command == "review-list":
+        return cmd_review_list(args)
     elif args.command == "review-sync":
         return cmd_review_sync(args)
+    elif args.command == "review-resolve":
+        return cmd_review_resolve(args)
     else:
         parser.print_help()
         return 1
