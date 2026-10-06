@@ -73,8 +73,8 @@ The platform enforces a strict separation between the **Platform Core** (which k
 | **Phase 1** | **First Report End-to-End (GSC)** | **Completed** | One command turns GSC CSV into an Ampere Excel report. Re-running produces zero new review items and an identical output file. |
 | **Phase 2** | **Live Data & Multi-Channel Reports** | **Completed** | Windsor API puller, Meta Ads adapter, Organic Social adapter, and 2 new deliverables (`paid_social_report` and `engagement_rate_report`) shipped with zero core architecture changes. |
 | **Phase 3** | **Shared Review Services** | **Completed** | Two-way Google Sheet / CSV review queue sync, domain impact scoring, decision ledger supersession & audit trail, and rule promotion to brand manifest. |
-| **Phase 4** | **Orchestration & Delivery** | *Next* | Scheduled execution, state machine run resumes, Gmail drafts, Slack reviewer DMs, and error alerts. |
-| **Phase 5** | **Self-Serve & Media Plans** | *Planned* | Control Sheet execution buttons and media plan naming convention enforcement. |
+| **Phase 4** | **Orchestration & Delivery** | **Completed** | Scheduled execution, state machine run resumes, Gmail drafts, Slack reviewer DMs, and error alerts. |
+| **Phase 5** | **Self-Serve & Media Plans** | **Completed** | Control Sheet execution triggers, media plan naming convention enforcement, and Planned vs. Actual spend pacing. |
 
 ---
 
@@ -130,7 +130,26 @@ The platform enforces a strict separation between the **Platform Core** (which k
 
 ---
 
-## 5. CLI Usage Guide
+## 5. Orchestration, Self-Serve & Media Planning
+
+1. **Run Resumability & Error Recovery**:
+   - Paused runs at `review_gate` (`awaiting_review`) can be resumed on demand via `python cli.py run --resume <RUN_ID>`.
+   - Automatically re-evaluates the review gate and reads canonical data directly from the platform store without re-ingesting raw files.
+2. **Automated Notification Hooks**:
+   - **Slack Webhooks & Audit**: Sends alerts on review blockages, failures, and delivery completions (logs to `outputs/notifications/slack_history.jsonl`).
+   - **Email Drafts**: Prepares `.eml` and metadata summaries in `outputs/email_drafts/` for QA verification before external delivery.
+3. **Daily Operational Summary Digest**:
+   - Consolidates run health, backlog review items, file receipts, and outputs over configurable lookback windows (`python cli.py ops-summary`).
+4. **Media Plan Governance & Variance Analysis**:
+   - Validates planned campaigns against standard naming conventions (`Brand_Channel_Objective_Campaign_Audience`).
+   - Non-compliant campaigns are routed directly to `review_items`.
+   - Tracks Planned vs Actual media spend and impressions pacing (`python cli.py plan-variance`).
+5. **Control Sheet Execution**:
+   - Watches control sheet triggers (`RUN` / `TRUE`), executes pipeline batches, and writes back execution statuses (`COMPLETED`, `PAUSED`, `FAILED`).
+
+---
+
+## 6. CLI Usage Guide
 
 ```bash
 # 1. Validate Brand Setup & Database Readiness
@@ -144,40 +163,41 @@ python cli.py run --brand ampere --deliverable gsc_organic_report --period 2026-
 python cli.py run --brand ampere --deliverable paid_social_report --period 2026-08
 python cli.py run --brand ampere --deliverable engagement_rate_report --period 2026-08
 
-# 4. Review Queue Operations
-# Inspect open items
+# 4. Resume Paused Run after Review Items Resolution
+python cli.py run --resume <RUN-ID>
+
+# 5. Review Queue Operations
 python cli.py review-list --brand ampere
-
-# Export review queue to CSV / Google Sheet format
 python cli.py review-export --brand ampere --output review_sheets/ampere_review.csv
-
-# Import reviewed decisions back into decision ledger
 python cli.py review-import --file review_sheets/ampere_review.csv --decided-by analyst@howl.internal
+python cli.py review-resolve --item-id <ITEM-UUID> --action reclassify --val generic_theme=dealership --reason "Dealership intent"
 
-# Resolve individual item directly
-python cli.py review-resolve \
-  --item-id <ITEM-UUID> \
-  --action reclassify \
-  --val generic_theme=dealership \
-  --reason "Dealership intent"
-
-# 5. Ledger Audit & Supersession
+# 6. Ledger Audit & Rule Promotion
 python cli.py ledger-audit --brand ampere --entity-key "ampere showroom"
-
-# 6. Discover & Promote Recurring Decisions to Manifest Rules
 python cli.py promote-rules --brand ampere --min-count 3
+
+# 7. Operational Dashboard & Notifications
+python cli.py runs-list --brand ampere --limit 10
+python cli.py ops-summary --brand ampere --hours 24
+python cli.py notify-test --channel slack
+python cli.py notify-test --channel email
+
+# 8. Media Plan Governance & Control Sheets
+python cli.py plan-ingest --brand ampere --file tests/fixtures/media_plan_ampere_2026.csv
+python cli.py plan-variance --brand ampere --period 2026-08
+python cli.py control-run --sheet tests/fixtures/control_sheet_sample.csv
 ```
 
 ---
 
-## 6. Automated Tests
+## 7. Automated Tests
 
 Run the full pytest suite:
 ```bash
 python -m pytest -v
 ```
 
-**Coverage Summary (41 passing tests)**:
+**Coverage Summary (51 passing tests)**:
 - Manifest schema and semantic validations.
 - Database migrations, table inspection, and manifest-to-store syncing.
 - Canonical schemas (`search_v1`, `paid_v2`, `organic_v1`, `web_v1`, `crm_v1`, `plan_v1`) and unique key deduplication.
@@ -190,6 +210,11 @@ python -m pytest -v
 - Decision ledger supersession, mandatory supersede reasons, and historical audit trail.
 - Two-way review queue export and bulk CSV import.
 - Recurring decision pattern discovery and automated manifest rule promotion.
+- Run state machine pause/resume and canonical DB rehydration.
+- Notification dispatching (Slack payload audit & Email draft creation).
+- Daily operational summary reporter & platform health indicators.
+- Media plan adapter, naming convention validator, and Planned vs Actual variance analyzer.
+- Control sheet self-serve batch trigger executor.
 - Report generators for all 3 deliverables (`gsc_organic_report`, `paid_social_report`, `engagement_rate_report`).
 - Golden deliverable file regression test and end-to-end pipeline execution.
 

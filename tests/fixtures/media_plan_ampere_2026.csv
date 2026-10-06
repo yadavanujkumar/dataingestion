@@ -1,0 +1,4 @@
+campaign,adset,ad,utm_source,utm_medium,utm_campaign,planned_spend,planned_impressions,start_date,end_date
+AMPERE_META_CONV_MAGNUS_PANINDIA,AdSet_Magnus_Conv,Ad_Magnus_01,meta,paid_social,ampere_magnus_conv,250000,1200000,2026-08-01,2026-08-31
+AMPERE_META_AWARE_NEXUS_METROS,AdSet_Nexus_Aware,Ad_Nexus_01,meta,paid_social,ampere_nexus_aware,150000,800000,2026-08-01,2026-08-31
+Invalid Campaign Name With Spaces and Bad Format,AdSet_Generic,Ad_Generic_01,meta,paid_social,generic,50000,200000,2026-08-01,2026-08-31

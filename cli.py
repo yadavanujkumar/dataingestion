@@ -31,7 +31,9 @@ from howlplatform.platform.store.db import (
     REQUIRED_TABLES,
 )
 from howlplatform.platform.store.sync import sync_brand_manifest
-from howlplatform.platform.orchestrator.pipeline import PipelineRun
+from howlplatform.platform.orchestrator.pipeline import PipelineRun, resume_run, list_runs
+from howlplatform.platform.orchestrator.ops_summary import generate_ops_summary, format_ops_summary_text
+from howlplatform.platform.delivery.notifications import send_slack_message, create_email_draft
 from howlplatform.platform.review.queue import get_open_review_items, resolve_review_item
 from howlplatform.deliverables.contract import list_generators, get_generator
 
@@ -140,11 +142,37 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    """Run end-to-end reporting pipeline."""
+    """Run or resume end-to-end reporting pipeline."""
+    resume_id = getattr(args, "resume", None)
+
+    if resume_id:
+        print("=" * 60)
+        print(f"HOWL Pipeline Resume: Run ID '{resume_id}'")
+        print("=" * 60)
+        try:
+            result = resume_run(resume_id)
+            if result["status"] == "awaiting_review":
+                print("\n[WARNING] RESUME HALTED: REVIEW GATE STILL BLOCKED")
+                print(result["message"])
+                return 2
+
+            print(f"\n[SUCCESS] Pipeline successfully resumed and delivered:")
+            for d in result.get("delivered_files", []):
+                print(f"  - File: {d['file_name']}")
+                print(f"    Location: {d['delivered_to']}")
+            return 0
+        except Exception as e:
+            print(f"\n[FAIL] Resume failed: {e}")
+            return 1
+
     brand_id = args.brand
     deliverable = args.deliverable
     period = args.period
     input_file = getattr(args, "input", None)
+
+    if not brand_id or not deliverable or not period:
+        print("Error: --brand, --deliverable, and --period are required unless using --resume <run_id>.")
+        return 1
 
     print("=" * 60)
     print(f"HOWL Pipeline Run: {brand_id} | {deliverable} | {period}")
@@ -167,6 +195,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(result['message'])
             print(f"Open review items: {result['gate_status']['items_count']}")
             print("Use 'python cli.py review-list --brand " + brand_id + "' to review and resolve items.")
+            print(f"After resolving items, resume this run with: python cli.py run --resume {result['run_id']}")
             return 2
 
         if result['status'] == "delivered":
@@ -179,6 +208,143 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 0
     except Exception as e:
         print(f"\n[FAIL] Pipeline run failed: {e}")
+        return 1
+
+
+def cmd_runs_list(args: argparse.Namespace) -> int:
+    """List recent pipeline execution runs."""
+    brand_id = getattr(args, "brand", None)
+    limit = getattr(args, "limit", 10)
+    runs = list_runs(brand_id=brand_id, limit=limit)
+
+    print("=" * 75)
+    print(f"HOWL Pipeline Runs History (Recent {len(runs)})")
+    print("=" * 75)
+    if not runs:
+        print("No recorded runs found.")
+        return 0
+
+    print(f"{'Run ID':<18} {'Brand':<10} {'Deliverable':<24} {'Period':<8} {'Status':<12}")
+    print("-" * 75)
+    for r in runs:
+        print(f"{r['run_id']:<18} {r['brand_id']:<10} {r['deliverable'][:22]:<24} {r['period']:<8} {r['status']:<12}")
+    return 0
+
+
+def cmd_ops_summary(args: argparse.Namespace) -> int:
+    """Display daily operational summary."""
+    brand_id = getattr(args, "brand", None)
+    hours = getattr(args, "hours", 24)
+    summary = generate_ops_summary(brand_id=brand_id, hours=hours)
+    print(format_ops_summary_text(summary))
+    return 0
+
+
+def cmd_notify_test(args: argparse.Namespace) -> int:
+    """Test notification channels (Slack, Email)."""
+    channel = getattr(args, "channel", "slack").lower()
+    print("=" * 60)
+    print(f"HOWL Notification Channel Test: [{channel.upper()}]")
+    print("=" * 60)
+
+    if channel == "slack":
+        res = send_slack_message(text="HOWL Platform automated test alert: Notification system active.", channel="#ops-test")
+        print(f"[PASS] Slack message dispatched. Mock mode: {res['mock']}, ID: {res['id']}")
+        return 0
+    elif channel == "email":
+        res = create_email_draft(
+            brand_id="system",
+            subject="HOWL Test Operational Alert",
+            body_text="Test notification dispatch from HOWL CLI.",
+        )
+        print(f"[PASS] Email draft created successfully: {res['eml_path']}")
+        return 0
+    else:
+        print(f"Unknown notification channel: {channel}. Choose 'slack' or 'email'.")
+        return 1
+
+
+def cmd_plan_ingest(args: argparse.Namespace) -> int:
+    """Ingest and validate a media plan against naming conventions."""
+    brand_id = args.brand
+    file_path = args.file
+    plan_id = getattr(args, "plan_id", "q3_plan") or "q3_plan"
+
+    print("=" * 65)
+    print(f"HOWL Media Plan Ingestion: '{brand_id}' (Plan: {plan_id})")
+    print("=" * 65)
+
+    manifest_path = CURRENT_DIR / "manifests" / f"{brand_id}.json"
+    manifest = load_manifest(manifest_path)
+    engine = get_engine()
+
+    from howlplatform.platform.adapters.media_plan import MediaPlanAdapter
+    adapter = MediaPlanAdapter(manifest, engine=engine)
+    run_id = f"plan_ingest_{brand_id}"
+
+    try:
+        rows, stats = adapter.process_file(file_path, plan_id=plan_id, run_id=run_id)
+        print(f"[SUCCESS] Media Plan Ingested:")
+        print(f"  - Total Rows:           {stats['total_rows']}")
+        print(f"  - Planned Spend (INR):  {stats['total_planned_spend']:,.2f}")
+        print(f"  - Planned Impressions:  {stats['total_planned_impressions']:,}")
+        print(f"  - Naming Violations:    {stats['naming_violations']}")
+        if stats['naming_violations'] > 0:
+            print(f"  [NOTE] Naming violations flagged in review queue. Run 'python cli.py review-list --brand {brand_id}' to inspect.")
+        return 0
+    except Exception as e:
+        print(f"[FAIL] Ingestion failed: {e}")
+        return 1
+
+
+def cmd_plan_variance(args: argparse.Namespace) -> int:
+    """Calculate and display Planned vs Actual media spend pacing."""
+    brand_id = args.brand
+    period = args.period
+    plan_id = getattr(args, "plan_id", None)
+
+    from howlplatform.platform.adapters.media_plan import calculate_planned_vs_actual
+    res = calculate_planned_vs_actual(brand_id, period, plan_id=plan_id, engine=get_engine())
+
+    print("=" * 80)
+    print(f"HOWL Media Plan Variance & Pacing: '{brand_id}' ({period})")
+    print("=" * 80)
+    print(f"Planned Spend: INR {res['total_planned_spend']:,.2f} | Actual Spend: INR {res['total_actual_spend']:,.2f}")
+    print(f"Variance:      INR {res['spend_variance']:,.2f} | Overall Pacing: {res['overall_pacing_pct']:.1f}%")
+    print("-" * 80)
+    print(f"{'Campaign':<36} {'Planned':<12} {'Actual':<12} {'Variance':<12} {'Pacing %'}")
+    print("-" * 80)
+    for c in res["campaigns"]:
+        print(
+            f"{c['campaign'][:34]:<36} "
+            f"{c['planned_spend']:<12,.0f} "
+            f"{c['actual_spend']:<12,.0f} "
+            f"{c['spend_variance']:<12,.0f} "
+            f"{c['spend_pacing_pct']:<6.1f}%"
+        )
+    return 0
+
+
+def cmd_control_run(args: argparse.Namespace) -> int:
+    """Execute triggered runs from a control sheet."""
+    sheet_path = args.sheet
+    print("=" * 65)
+    print(f"HOWL Control Sheet Processor: {sheet_path}")
+    print("=" * 65)
+
+    from howlplatform.platform.orchestrator.control_sheet import run_control_sheet
+    try:
+        res = run_control_sheet(sheet_path, engine=get_engine())
+        print(f"Total Rows:     {res['total_rows']}")
+        print(f"Triggered Runs: {res['triggered_count']}")
+        if res["runs"]:
+            print("\nExecution Results:")
+            for r in res["runs"]:
+                err = f" (Error: {r['error']})" if r.get("error") else ""
+                print(f"  * [{r['status']}] {r['brand_id']} - {r['deliverable']} ({r['period']}) ID: {r.get('run_id', 'N/A')}{err}")
+        return 0
+    except Exception as e:
+        print(f"[FAIL] Control sheet run failed: {e}")
         return 1
 
 
@@ -331,11 +497,26 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("migrate", help="Run database migrations")
 
     # run
-    run_parser = subparsers.add_parser("run", help="Run a report pipeline")
-    run_parser.add_argument("--brand", required=True, help="Brand ID")
-    run_parser.add_argument("--deliverable", required=True, help="Deliverable name (e.g. gsc_organic_report)")
-    run_parser.add_argument("--period", required=True, help="Period (e.g. 2026-08)")
+    run_parser = subparsers.add_parser("run", help="Run or resume a report pipeline")
+    run_parser.add_argument("--brand", required=False, help="Brand ID")
+    run_parser.add_argument("--deliverable", required=False, help="Deliverable name (e.g. gsc_organic_report)")
+    run_parser.add_argument("--period", required=False, help="Period (e.g. 2026-08)")
     run_parser.add_argument("--input", required=False, help="Path to input source file")
+    run_parser.add_argument("--resume", required=False, help="Run ID to resume from review gate")
+
+    # runs-list
+    runs_parser = subparsers.add_parser("runs-list", help="List recent pipeline execution runs")
+    runs_parser.add_argument("--brand", required=False, help="Brand ID")
+    runs_parser.add_argument("--limit", type=int, default=10, help="Max runs to display")
+
+    # ops-summary
+    ops_parser = subparsers.add_parser("ops-summary", help="Display daily operational summary")
+    ops_parser.add_argument("--brand", required=False, help="Brand ID")
+    ops_parser.add_argument("--hours", type=int, default=24, help="Window in hours")
+
+    # notify-test
+    notify_parser = subparsers.add_parser("notify-test", help="Test notification dispatch")
+    notify_parser.add_argument("--channel", default="slack", choices=["slack", "email"], help="Channel to test")
 
     # review-list
     review_list_parser = subparsers.add_parser("review-list", help="List open review items")
@@ -374,6 +555,22 @@ def build_parser() -> argparse.ArgumentParser:
     promote_parser.add_argument("--brand", required=True, help="Brand ID")
     promote_parser.add_argument("--min-count", type=int, default=2, help="Minimum occurrences to promote")
 
+    # plan-ingest
+    plan_ingest_parser = subparsers.add_parser("plan-ingest", help="Ingest media plan and validate naming conventions")
+    plan_ingest_parser.add_argument("--brand", required=True, help="Brand ID")
+    plan_ingest_parser.add_argument("--file", required=True, help="Path to media plan CSV")
+    plan_ingest_parser.add_argument("--plan-id", default="q3_plan", help="Media plan identifier")
+
+    # plan-variance
+    plan_var_parser = subparsers.add_parser("plan-variance", help="Calculate Planned vs Actual spend variance")
+    plan_var_parser.add_argument("--brand", required=True, help="Brand ID")
+    plan_var_parser.add_argument("--period", required=True, help="Period (e.g. 2026-08)")
+    plan_var_parser.add_argument("--plan-id", required=False, help="Filter by plan ID")
+
+    # control-run
+    control_parser = subparsers.add_parser("control-run", help="Execute triggered runs from a control sheet")
+    control_parser.add_argument("--sheet", required=True, help="Path to control sheet CSV")
+
     return parser
 
 
@@ -391,6 +588,12 @@ def main() -> int:
         return cmd_migrate(args)
     elif args.command == "run":
         return cmd_run(args)
+    elif args.command == "runs-list":
+        return cmd_runs_list(args)
+    elif args.command == "ops-summary":
+        return cmd_ops_summary(args)
+    elif args.command == "notify-test":
+        return cmd_notify_test(args)
     elif args.command == "review-list":
         return cmd_review_list(args)
     elif args.command == "review-sync":
@@ -405,6 +608,12 @@ def main() -> int:
         return cmd_ledger_audit(args)
     elif args.command == "promote-rules":
         return cmd_promote_rules(args)
+    elif args.command == "plan-ingest":
+        return cmd_plan_ingest(args)
+    elif args.command == "plan-variance":
+        return cmd_plan_variance(args)
+    elif args.command == "control-run":
+        return cmd_control_run(args)
     else:
         parser.print_help()
         return 1
