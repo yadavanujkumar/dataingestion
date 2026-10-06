@@ -245,6 +245,77 @@ def cmd_review_sync(args: argparse.Namespace) -> int:
     return cmd_review_list(args)
 
 
+def cmd_review_export(args: argparse.Namespace) -> int:
+    """Export review queue to CSV for Google Sheets sync."""
+    brand_id = args.brand
+    out_path = getattr(args, "out", None)
+    from howlplatform.platform.review.sheet_sync import export_review_sheet
+    saved_file = export_review_sheet(brand_id, out_path)
+    print(f"[SUCCESS] Exported open review queue to: {saved_file}")
+    return 0
+
+
+def cmd_review_import(args: argparse.Namespace) -> int:
+    """Import analyst decisions from CSV back into decision ledger."""
+    brand_id = args.brand
+    in_path = args.file
+    decided_by = getattr(args, "by", "analyst@howl.internal")
+    from howlplatform.platform.review.sheet_sync import import_review_sheet
+    res = import_review_sheet(brand_id, in_path, decided_by=decided_by)
+    print(f"[SUCCESS] Review sheet sync complete for '{brand_id}':")
+    print(f"  - Resolved items: {res['resolved_count']}")
+    print(f"  - Skipped items: {res['skipped_count']}")
+    if res['errors']:
+        print(f"  - Errors: {res['errors']}")
+    return 0
+
+
+def cmd_ledger_audit(args: argparse.Namespace) -> int:
+    """View audit trail of decisions recorded in the decision ledger."""
+    brand_id = args.brand
+    key = getattr(args, "key", None)
+    from howlplatform.platform.ledger.audit import get_brand_audit_trail, get_decision_history
+
+    print("=" * 70)
+    print(f"HOWL Decision Ledger Audit Trail: '{brand_id}'")
+    print("=" * 70)
+
+    if key:
+        history = get_decision_history(brand_id, "query", key)
+        if not history:
+            print(f"No decisions recorded for key: '{key}'")
+            return 0
+        print(f"History for '{key}':")
+        for h in history:
+            print(f"  [{h['decided_at']}] Action: {h['decision']} | Value: {h['value']} | By: {h['decided_by']} | Reason: {h['reason']}")
+    else:
+        trail = get_brand_audit_trail(brand_id, limit=20)
+        if not trail:
+            print("No decisions recorded in ledger.")
+            return 0
+        for t in trail:
+            print(f"  [{t['decided_at']}] {t['entity_key'][:25]:<26} -> {t['decision']:<10} | {t['value']} ({t['decided_by']})")
+    return 0
+
+
+def cmd_promote_rules(args: argparse.Namespace) -> int:
+    """Promote recurring decisions into brand manifest rules."""
+    brand_id = args.brand
+    min_count = getattr(args, "min_count", 2)
+    from howlplatform.platform.ledger.promotion import promote_decisions_to_manifest
+    res = promote_decisions_to_manifest(brand_id, min_count=min_count)
+    print("=" * 60)
+    print(f"HOWL Rule Promotion: '{brand_id}' (Manifest v{res['new_version']})")
+    print("=" * 60)
+    print(f"Promoted regex rules: {len(res['promoted_rules'])}")
+    for r in res['promoted_rules']:
+        print(f"  - Pattern: {r['pattern']} -> {r['tag']}")
+    print(f"Promoted misspellings: {len(res['promoted_misspellings'])}")
+    for m in res['promoted_misspellings']:
+        print(f"  - {m}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="howl",
@@ -282,6 +353,27 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_parser.add_argument("--by", default="analyst@howl.internal", help="Reviewer identity")
     resolve_parser.add_argument("--reason", default="", help="Reason for decision")
 
+    # review-export
+    export_parser = subparsers.add_parser("review-export", help="Export review queue to CSV for Google Sheets")
+    export_parser.add_argument("--brand", required=True, help="Brand ID")
+    export_parser.add_argument("--out", required=False, help="Target export path")
+
+    # review-import
+    import_parser = subparsers.add_parser("review-import", help="Import analyst decisions from CSV/Sheet")
+    import_parser.add_argument("--brand", required=True, help="Brand ID")
+    import_parser.add_argument("--file", required=True, help="Path to completed review CSV")
+    import_parser.add_argument("--by", default="analyst@howl.internal", help="Reviewer email")
+
+    # ledger-audit
+    audit_parser = subparsers.add_parser("ledger-audit", help="View decision ledger audit trail")
+    audit_parser.add_argument("--brand", required=True, help="Brand ID")
+    audit_parser.add_argument("--key", required=False, help="Specific entity key to inspect")
+
+    # promote-rules
+    promote_parser = subparsers.add_parser("promote-rules", help="Promote recurring decisions to manifest rules")
+    promote_parser.add_argument("--brand", required=True, help="Brand ID")
+    promote_parser.add_argument("--min-count", type=int, default=2, help="Minimum occurrences to promote")
+
     return parser
 
 
@@ -305,6 +397,14 @@ def main() -> int:
         return cmd_review_sync(args)
     elif args.command == "review-resolve":
         return cmd_review_resolve(args)
+    elif args.command == "review-export":
+        return cmd_review_export(args)
+    elif args.command == "review-import":
+        return cmd_review_import(args)
+    elif args.command == "ledger-audit":
+        return cmd_ledger_audit(args)
+    elif args.command == "promote-rules":
+        return cmd_promote_rules(args)
     else:
         parser.print_help()
         return 1

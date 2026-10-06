@@ -72,8 +72,8 @@ The platform enforces a strict separation between the **Platform Core** (which k
 | **Phase 0** | **Foundations** | **Completed** | `howl validate --brand ampere` passes; all 14 tables verified in database. |
 | **Phase 1** | **First Report End-to-End (GSC)** | **Completed** | One command turns GSC CSV into an Ampere Excel report. Re-running produces zero new review items and an identical output file. |
 | **Phase 2** | **Live Data & Multi-Channel Reports** | **Completed** | Windsor API puller, Meta Ads adapter, Organic Social adapter, and 2 new deliverables (`paid_social_report` and `engagement_rate_report`) shipped with zero core architecture changes. |
-| **Phase 3** | **Shared Review Services** | *Next* | Two-way Google Sheet review queue sync, bulk resolution actions, and promotion to manifest rules. |
-| **Phase 4** | **Orchestration & Delivery** | *Planned* | Scheduled execution, Gmail drafts, Slack reviewer DMs, and error alerts. |
+| **Phase 3** | **Shared Review Services** | **Completed** | Two-way Google Sheet / CSV review queue sync, domain impact scoring, decision ledger supersession & audit trail, and rule promotion to brand manifest. |
+| **Phase 4** | **Orchestration & Delivery** | *Next* | Scheduled execution, state machine run resumes, Gmail drafts, Slack reviewer DMs, and error alerts. |
 | **Phase 5** | **Self-Serve & Media Plans** | *Planned* | Control Sheet execution buttons and media plan naming convention enforcement. |
 
 ---
@@ -108,7 +108,29 @@ The platform enforces a strict separation between the **Platform Core** (which k
 
 ---
 
-## 4. CLI Usage Guide
+## 4. Shared Review Services & Decision Ledger
+
+1. **Domain Impact Scoring**:
+   - `search`: $\text{clicks} + (\text{impressions} \times 0.05)$
+   - `paid`: $\text{spend}$
+   - `organic`: $\text{engagements}$
+   - Unresolved items are ranked so reviewers address high-volume items first.
+2. **Review Gate**:
+   - Evaluates unresolved impact ratio against brand manifest threshold ($\le 2\%$). Blocks generation when threshold is exceeded.
+3. **Decision Ledger & Audit Supersession**:
+   - Immutable append-only ledger (`decision_ledger`).
+   - Supersessions require a mandatory `supersede_reason`.
+   - Full history queryable with timestamps, authors, and rationale.
+4. **Two-Way Sheet / CSV Sync**:
+   - Export review queue to Google Sheets / CSV for non-technical analysts.
+   - Import reviewer edits (`status=resolved`, `action`, `val`, `reason`), automatically updating the ledger and unblocking runs.
+5. **Rule Promotion Engine**:
+   - Discovers recurring manual classifications (frequency $\ge 3$).
+   - Automatically promotes high-frequency patterns into regex rules in the Brand Manifest, versioning the manifest file.
+
+---
+
+## 5. CLI Usage Guide
 
 ```bash
 # 1. Validate Brand Setup & Database Readiness
@@ -117,36 +139,45 @@ python cli.py validate --brand ampere
 # 2. Run Database Migrations
 python cli.py migrate
 
-# 3. Generate Deliverable 1: Organic Search Report
+# 3. Generate Deliverables
 python cli.py run --brand ampere --deliverable gsc_organic_report --period 2026-08
-
-# 4. Generate Deliverable 2: Paid Social Report
 python cli.py run --brand ampere --deliverable paid_social_report --period 2026-08
-
-# 5. Generate Deliverable 3: Engagement Rate Report
 python cli.py run --brand ampere --deliverable engagement_rate_report --period 2026-08
 
-# 6. Inspect Open Review Queue Items
+# 4. Review Queue Operations
+# Inspect open items
 python cli.py review-list --brand ampere
 
-# 7. Resolve Review Item & Record into Permanent Decision Ledger
+# Export review queue to CSV / Google Sheet format
+python cli.py review-export --brand ampere --output review_sheets/ampere_review.csv
+
+# Import reviewed decisions back into decision ledger
+python cli.py review-import --file review_sheets/ampere_review.csv --decided-by analyst@howl.internal
+
+# Resolve individual item directly
 python cli.py review-resolve \
   --item-id <ITEM-UUID> \
   --action reclassify \
   --val generic_theme=dealership \
   --reason "Dealership intent"
+
+# 5. Ledger Audit & Supersession
+python cli.py ledger-audit --brand ampere --entity-key "ampere showroom"
+
+# 6. Discover & Promote Recurring Decisions to Manifest Rules
+python cli.py promote-rules --brand ampere --min-count 3
 ```
 
 ---
 
-## 5. Automated Tests
+## 6. Automated Tests
 
 Run the full pytest suite:
 ```bash
 python -m pytest -v
 ```
 
-**Coverage Summary (35 passing tests)**:
+**Coverage Summary (41 passing tests)**:
 - Manifest schema and semantic validations.
 - Database migrations, table inspection, and manifest-to-store syncing.
 - Canonical schemas (`search_v1`, `paid_v2`, `organic_v1`, `web_v1`, `crm_v1`, `plan_v1`) and unique key deduplication.
@@ -154,6 +185,11 @@ python -m pytest -v
 - Legacy sheet importer, percentage parsing, and problem cell flagging.
 - GSC CSV, Meta Ads, and Organic Social adapters.
 - 3-tier classification hierarchy, real-word context matching (`amber`/`empire`), and ledger lookup overrides.
+- Domain impact scoring (`search`, `paid`, `organic`) and reviewer queue impact ranking.
 - Review queue gate checks ($\le 2\%$ threshold) and decision ledger append-only persistence.
+- Decision ledger supersession, mandatory supersede reasons, and historical audit trail.
+- Two-way review queue export and bulk CSV import.
+- Recurring decision pattern discovery and automated manifest rule promotion.
 - Report generators for all 3 deliverables (`gsc_organic_report`, `paid_social_report`, `engagement_rate_report`).
 - Golden deliverable file regression test and end-to-end pipeline execution.
+
