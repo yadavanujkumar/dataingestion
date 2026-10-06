@@ -1,0 +1,139 @@
+{
+  "brand_id": "ampere",
+  "manifest_version": 1,
+  "identity": {
+    "display_name": "Ampere",
+    "palette": ["1C2321", "4E8C2B"],
+    "fonts": {
+      "heading": "Arial",
+      "body": "Arial"
+    },
+    "logo_ref": "drive://HOWL/Ampere/brand/logo.png",
+    "templates": {
+      "pptx": "drive://HOWL/Ampere/brand/template.pptx"
+    },
+    "voice": "concise, declarative"
+  },
+  "sources": [
+    {
+      "source_id": "ampere-gsc",
+      "channel": "google_search_console",
+      "domain": "search",
+      "mode": "csv",
+      "account_ref": "ampere-electric.com",
+      "schema_ref": "search_v1",
+      "cadence": "monthly",
+      "currency": null,
+      "timezone": "Asia/Kolkata",
+      "auth_status": "n/a"
+    },
+    {
+      "source_id": "ampere-meta-ads",
+      "channel": "meta_ads",
+      "domain": "paid",
+      "mode": "windsor_api",
+      "account_ref": "act_XXXX",
+      "schema_ref": "paid_v2",
+      "cadence": "daily",
+      "currency": "INR",
+      "timezone": "Asia/Kolkata",
+      "auth_status": "active"
+    },
+    {
+      "source_id": "ampere-ig-insights",
+      "channel": "instagram",
+      "domain": "organic",
+      "mode": "windsor_api",
+      "account_ref": "ig_ampere_official",
+      "schema_ref": "organic_v1",
+      "cadence": "daily",
+      "currency": null,
+      "timezone": "Asia/Kolkata",
+      "auth_status": "active"
+    },
+    {
+      "source_id": "ampere-google-ads",
+      "channel": "google_ads",
+      "domain": "paid",
+      "mode": "windsor_api",
+      "account_ref": "gads_12345678",
+      "schema_ref": "paid_v2",
+      "cadence": "daily",
+      "currency": "INR",
+      "timezone": "Asia/Kolkata",
+      "auth_status": "active"
+    }
+  ],
+  "deliverables": [
+    "gsc_organic_report",
+    "paid_social_report",
+    "engagement_rate_report"
+  ],
+  "review": {
+    "sheet_ref": "gsheet://1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+    "blocking_share": 0.02
+  },
+  "variant_lists": {
+    "misspellings": [
+      "amper",
+      "ampaire",
+      "ampair",
+      "amber",
+      "empire"
+    ]
+  },
+  "product_roster": {
+    "tagged": [
+      "Magnus",
+      "Magnus G Max",
+      "Magnus Neo",
+      "Nexus",
+      "Reo",
+      "Reo Vyb"
+    ],
+    "branded_untagged": [
+      "Primus",
+      "Zeal"
+    ]
+  },
+  "launch_calendar": [
+    {
+      "date": "2026-08-01",
+      "product": "Magnus G Max",
+      "activity": "awareness"
+    },
+    {
+      "date": "2026-08-01",
+      "product": "Reo Vyb",
+      "activity": "lead_gen"
+    }
+  ],
+  "rules": [
+    {
+      "domain": "search",
+      "match": "regex",
+      "pattern": "\\b(price|cost)\\b",
+      "tag": "generic_theme=pricing"
+    }
+  ],
+  "metrics": {
+    "engagement_rate": {
+      "formula": "sum(engagements) / sum(impressions)",
+      "engagements": {
+        "meta_ads": "post_engagement",
+        "instagram": "likes + comments + shares + saves",
+        "facebook": "reactions + comments + shares",
+        "youtube_ads": "engagements",
+        "youtube": "likes + comments + shares",
+        "linkedin_ads": "total_engagements",
+        "linkedin": "clicks + reactions + comments + shares"
+      },
+      "denominator": {
+        "default": "impressions",
+        "youtube": "views"
+      },
+      "aggregate": "ratio_of_sums",
+      "flag_if_above": 1.0
+    }
+  }
+}

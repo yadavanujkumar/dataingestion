@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HOWLBrandManifest",
+  "description": "Validation schema for HOWL Brand Manifest (Static and Learned halves)",
+  "type": "object",
+  "required": [
+    "brand_id",
+    "manifest_version",
+    "identity",
+    "sources",
+    "deliverables",
+    "review"
+  ],
+  "properties": {
+    "brand_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "manifest_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "identity": {
+      "type": "object",
+      "required": ["display_name", "palette", "fonts", "logo_ref", "templates", "voice"],
+      "properties": {
+        "display_name": { "type": "string" },
+        "palette": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^#?[0-9A-Fa-f]{6}$" },
+          "minItems": 1
+        },
+        "fonts": {
+          "type": "object",
+          "required": ["heading", "body"],
+          "properties": {
+            "heading": { "type": "string" },
+            "body": { "type": "string" }
+          }
+        },
+        "logo_ref": { "type": "string" },
+        "templates": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "voice": { "type": "string" }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "source_id",
+          "channel",
+          "domain",
+          "mode",
+          "account_ref",
+          "schema_ref",
+          "cadence",
+          "currency",
+          "timezone",
+          "auth_status"
+        ],
+        "properties": {
+          "source_id": { "type": "string" },
+          "channel": { "type": "string" },
+          "domain": {
+            "type": "string",
+            "enum": ["search", "paid", "organic", "web", "crm", "plan"]
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["csv", "windsor_api", "legacy", "direct_api"]
+          },
+          "account_ref": { "type": "string" },
+          "schema_ref": { "type": "string" },
+          "cadence": {
+            "type": "string",
+            "enum": ["daily", "weekly", "monthly", "ad_hoc"]
+          },
+          "currency": {
+            "type": ["string", "null"]
+          },
+          "timezone": { "type": "string" },
+          "auth_status": {
+            "type": "string",
+            "enum": ["active", "expired", "pending", "n/a"]
+          }
+        }
+      }
+    },
+    "deliverables": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "review": {
+      "type": "object",
+      "required": ["sheet_ref", "blocking_share"],
+      "properties": {
+        "sheet_ref": { "type": "string" },
+        "blocking_share": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      }
+    },
+    "variant_lists": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+    "product_roster": {
+      "type": "object",
+      "properties": {
+        "tagged": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "branded_untagged": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "launch_calendar": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["date", "product", "activity"],
+        "properties": {
+          "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+          "product": { "type": "string" },
+          "activity": { "type": "string" }
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["domain", "match", "pattern", "tag"],
+        "properties": {
+          "domain": { "type": "string" },
+          "match": { "type": "string", "enum": ["regex", "exact", "contains"] },
+          "pattern": { "type": "string" },
+          "tag": { "type": "string" }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["formula", "aggregate"],
+        "properties": {
+          "formula": { "type": "string" },
+          "engagements": { "type": "object" },
+          "denominator": { "type": "object" },
+          "aggregate": { "type": "string" },
+          "flag_if_above": { "type": "number" }
+        }
+      }
+    }
+  }
+}
